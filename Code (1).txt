@@ -1,0 +1,271 @@
+; --- Mapeamento de Hardware (8051) ---
+    RS      equ     P1.3    ;Reg Select ligado em P1.3
+    EN      equ     P1.2    ;Enable ligado em P1.2
+
+
+org 0000h
+	LJMP START
+
+org 0040h
+RESPOSTA:
+	DB "TESTE"
+	DB 00h
+org 0050h
+PALAVRA:
+	DB "_____"
+  DB 00h ; Marca null no fim da String
+HP:
+  DB "Vidas XXX"
+  DB 00h ; Marca null no fim da String
+
+org 023H ; PONTEIRO DA INTERRUPCAO PARA CANAL SERIAL
+MOV A,SBUF ; REALIZA A LEITURA DO BYTE RECEBIDO
+; ESCREVE O VALOR NO ENDEREÇO 30H
+MOV 60h, A 
+CJNE A, #0Dh, test
+clear:
+CLR RI ; RESETA RI PARA RECEBER NOVO BYTE
+RETI
+test:
+MOV R7,60h 
+JMP clear
+
+
+;MAIN
+org 0100h
+START:
+
+main:
+	MOV SCON, #50H ;porta serial no modo 1 e habilita a recepção
+	MOV PCON, #80h ;set o bit SMOD
+	MOV TMOD, #20H ;CT1 no modo 2
+	MOV TH1, #243 ;valor para a recarga
+	MOV TL1, #243 ;valor para a primeira contagem
+	MOV IE,#90H ; Habilita interrupção serial
+	SETB TR1 ;liga o contador/temporizador 1
+	MOV A, #00h
+	MOV DPTR,#PALAVRA    
+	ACALL escreveNaMemoria
+	MOV DPTR,#HP        
+	MOV A, #06h
+	ACALL escreveNaMemoria
+	ACALL lcd_init
+sub:
+	MOV A, #00h                  ; Define a coluna em que começa a escrever
+	ACALL posicionaCursor        ; Chama a função para posicionar o cursor
+	MOV A, #00h
+	ACALL escreveStringROM       ; Chama a função para escrever o texto
+	MOV A, #40h                  
+  ACALL posicionaCursor          
+	MOV A, #06h                
+  ACALL escreveStringROM
+  MOV DPTR,#RESPOSTA            ; Endereço inicial de memória da String PALAVRA ;liga o contador/temporizador 1
+
+	MOV A, #00h                  
+  ACALL verificar          
+	JMP sub                     ; Volta a função
+
+escreveNaMemoria:
+  MOV R1, #70h
+  ADD A, R1           ; Define o acumulador como 0
+  MOV R1, A
+  MOV R2, #00h
+loopM:
+  MOV A, R2                 ; Passa o valor de R1 para o acumulador
+	MOVC A,@A+DPTR	        ; Lê da memória de programa endereço inicial da String somado com o acumulador
+	JZ finishM		        ; Se A for 0, chegou no final da string, então ele sai do loop
+	MOV @R1, A	    ; Chama a função para colocar o que está no acumulador no display
+	INC R1
+	INC R2			        ; Aponta para a próxima informação
+   MOV A, R2                ; Move o valor de R1 para o acumulador
+	JMP loopM		        ; Volta para o começo do loop
+finishM:                     ; Encerra o loop
+	RET
+
+; Escreve a String no Display LCD
+escreveStringROM:
+  MOV R1, #70h
+  ADD A, R1           ; Define o acumulador como 0
+  MOV R1, A
+  MOV R2, #00h
+loop:
+  MOV A, R2                 ; Passa o valor de R1 para o acumulador
+	MOV A,@R1 	        ; Lê da memória de programa endereço inicial da String somado com o acumulador
+	JZ finish		        ; Se A for 0, chegou no final da string, então ele sai do loop
+	ACALL sendCharacter	    ; Chama a função para colocar o que está no acumulador no display
+	INC R1
+	INC R2			        ; Aponta para a próxima informação
+    MOV A, R2               ; Move o valor de R1 para o acumulador
+	JMP loop		        ; Volta para o começo do loop
+finish:                     ; Encerra o loop
+	RET
+
+verificar:
+	MOV R1, #70h
+  ADD A, R1           ; Define o acumulador como 0
+  MOV R1, A
+  MOV R2, #00h
+  MOV 61h, R7
+loop2:
+  MOV A, R2                 ; Passa o valor de R1 para o acumulador
+	MOVC A,@A+DPTR
+	JZ finish2		        ; Se A for 0, chegou no final da string, então ele sai do loop
+	CJNE A, 61h, part2
+	MOV @R1, 61h
+part2:
+	INC R1
+	INC R2					        ; Aponta para a próxima informação
+   MOV A, R2                ; Move o valor de R1 para o acumulador
+	JMP loop2		        ; Volta para o começo do loop
+finish2:                     ; Encerra o loop
+	RET
+
+	
+; initialise the display
+; see instruction set for details
+lcd_init:
+
+	CLR RS		; clear RS - indicates that instructions are being sent to the module
+
+; function set	
+	CLR P1.7		; |
+	CLR P1.6		; |
+	SETB P1.5		; |
+	CLR P1.4		; | high nibble set
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+
+	CALL delay		; wait for BF to clear	
+					; function set sent for first time - tells module to go into 4-bit mode
+; Why is function set high nibble sent twice? See 4-bit operation on pages 39 and 42 of HD44780.pdf.
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+					; same function set high nibble sent a second time
+
+	SETB P1.7		; low nibble set (only P1.7 needed to be changed)
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+				; function set low nibble sent
+	CALL delay		; wait for BF to clear
+
+
+; entry mode set
+; set to increment with no shift
+	CLR P1.7		; |
+	CLR P1.6		; |
+	CLR P1.5		; |
+	CLR P1.4		; | high nibble set
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+
+	SETB P1.6		; |
+	SETB P1.5		; |low nibble set
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+
+	CALL delay		; wait for BF to clear
+
+
+; display on/off control
+; the display is turned on, the cursor is turned on and blinking is turned on
+	CLR P1.7		; |
+	CLR P1.6		; |
+	CLR P1.5		; |
+	CLR P1.4		; | high nibble set
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+
+	SETB P1.7		; |
+	SETB P1.6		; |
+	SETB P1.5		; |
+	SETB P1.4		; | low nibble set
+
+	SETB EN		; |
+	CLR EN		; | negative edge on E
+
+	CALL delay		; wait for BF to clear
+	RET
+
+
+sendCharacter:
+	SETB RS  		    ; setb RS - indicates that data is being sent to module
+	MOV C, ACC.7		; |
+	MOV P1.7, C			; |
+	MOV C, ACC.6		; |
+	MOV P1.6, C			; |
+	MOV C, ACC.5		; |
+	MOV P1.5, C			; |
+	MOV C, ACC.4		; |
+	MOV P1.4, C			; | high nibble set
+
+	SETB EN			; |
+	CLR EN			; | negative edge on E
+
+	MOV C, ACC.3		; |
+	MOV P1.7, C			; |
+	MOV C, ACC.2		; |
+	MOV P1.6, C			; |
+	MOV C, ACC.1		; |
+	MOV P1.5, C			; |
+	MOV C, ACC.0		; |
+	MOV P1.4, C			; | low nibble set
+
+	SETB EN			; |
+	CLR EN			; | negative edge on E
+
+	CALL delay			; wait for BF to clear
+	CALL delay			; wait for BF to clear
+	RET
+
+;Posiciona o cursor na linha e coluna desejada.
+;Escreva no Acumulador o valor de endereço da linha e coluna.
+;|--------------------------------------------------------------------------------------|
+;|linha 1 | 00 | 01 | 02 | 03 | 04 |05 | 06 | 07 | 08 | 09 |0A | 0B | 0C | 0D | 0E | 0F |
+;|linha 2 | 40 | 41 | 42 | 43 | 44 |45 | 46 | 47 | 48 | 49 |4A | 4B | 4C | 4D | 4E | 4F |
+;|--------------------------------------------------------------------------------------|
+posicionaCursor:
+MOV SCON, #50H ;porta serial no modo 1 e habilita a recepção
+MOV PCON, #80h ;set o bit SMOD
+MOV TMOD, #20H ;CT1 no modo 
+MOV TH1, #243 ;valor para a recarga
+MOV TL1, #243 ;valor para a primeira contagem
+MOV IE,#90H ; Habilita interrupção serial
+SETB TR1 ;liga o contador/temporizador 1
+	CLR RS	
+	SETB P1.7		    ; |
+	MOV C, ACC.6		; |
+	MOV P1.6, C			; |
+	MOV C, ACC.5		; |
+	MOV P1.5, C			; |
+	MOV C, ACC.4		; |
+	MOV P1.4, C			; | high nibble set
+
+	SETB EN			; |
+	CLR EN			; | negative edge on E
+
+	MOV C, ACC.3		; |
+	MOV P1.7, C			; |
+	MOV C, ACC.2		; |
+	MOV P1.6, C			; |
+	MOV C, ACC.1		; |
+	MOV P1.5, C			; |
+	MOV C, ACC.0		; |
+	MOV P1.4, C			; | low nibble set
+
+	SETB EN			; |
+	CLR EN			; | negative edge on E
+
+	CALL delay			; wait for BF to clear
+	CALL delay			; wait for BF to clear
+	RET
+
+delay:
+	MOV R0, #50
+	DJNZ R0, $
+	RET
